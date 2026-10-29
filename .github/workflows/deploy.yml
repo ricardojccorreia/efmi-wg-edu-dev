@@ -1,0 +1,64 @@
+name: Deploy develop preview
+
+# Publishes the `develop` branch of ricardojccorreia/efmi-wg-edu as a public
+# preview. The source repo is public, so no token is needed to fetch it.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Fetch develop branch
+        uses: actions/checkout@v4
+        with:
+          repository: ricardojccorreia/efmi-wg-edu
+          ref: develop
+          path: site
+
+      - name: Skip if develop has not changed
+        id: check
+        run: |
+          sha=$(git -C site rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          live=$(curl -fsSL https://ricardojccorreia.github.io/efmi-wg-edu-dev/.preview-sha 2>/dev/null || true)
+          if [ "$live" = "$sha" ] && [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Adapt for preview
+        if: steps.check.outputs.skip != 'true'
+        working-directory: site
+        run: |
+          rm -rf .git .github
+          echo "${{ steps.check.outputs.sha }}" > .preview-sha
+          printf 'User-agent: *\nDisallow: /\n' > robots.txt
+          find . -name '*.html' -print0 | xargs -0 sed -i \
+            -e 's#"/efmi-wg-edu/#"/efmi-wg-edu-dev/#g' \
+            -e 's#<head>#<head>\n<meta name="robots" content="noindex, nofollow">#' \
+            -e 's#\(<body[^>]*>\)#\1\n<div style="background:\#b45309;color:\#fff;text-align:center;padding:.4rem 1rem;font:600 14px/1.4 system-ui,sans-serif">Development preview – not the official site. <a href="https://ricardojccorreia.github.io/efmi-wg-edu/" style="color:\#fff;text-decoration:underline">Go to the official site</a></div>#'
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.check.outputs.skip != 'true'
+        with:
+          path: site
+
+      - id: deployment
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/deploy-pages@v4
